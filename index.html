@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pac-Man TMA</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: var(--tg-theme-bg-color, #000);
+            color: var(--tg-theme-text-color, #fff);
+            font-family: sans-serif;
+            overflow: hidden;
+            touch-action: none; /* Отключаем скролл страницы */
+        }
+        #score {
+            font-size: 24px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        canvas {
+            background-color: #000;
+            border: 2px solid #2121ff;
+            box-shadow: 0 0 15px rgba(33, 33, 255, 0.5);
+            max-width: 95vw;
+            max-height: 75vh;
+        }
+        #game-over {
+            display: none;
+            position: absolute;
+            font-size: 32px;
+            color: red;
+            text-shadow: 2px 2px 4px #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">Счёт: 0</div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="game-over">GAME OVER</div>
+
+    <script>
+        // Инициализация Telegram WebApp
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+        
+        // Виброотклик при сборе точек
+        const haptic = tg.HapticFeedback;
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const gameOverEl = document.getElementById('game-over');
+
+        // Карта: 1 - стена, 2 - точка, 0 - пустота
+        const MAP = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,2,2,2,2,2,1,2,2,2,2,2,1],
+            [1,2,1,1,1,2,1,2,1,1,1,2,1],
+            [1,2,2,2,2,2,2,2,2,2,2,2,1],
+            [1,2,1,2,1,1,1,1,1,2,1,2,1],
+            [1,2,2,2,2,2,1,2,2,2,2,2,1],
+            [1,1,1,1,1,2,1,2,1,1,1,1,1],
+            [1,2,2,2,2,2,2,2,2,2,2,2,1],
+            [1,1,1,1,1,2,1,2,1,1,1,1,1],
+            [1,2,2,2,2,2,1,2,2,2,2,2,1],
+            [1,2,1,2,1,1,1,1,1,2,1,2,1],
+            [1,2,2,2,2,2,2,2,2,2,2,2,1],
+            [1,2,1,1,1,2,1,2,1,1,1,2,1],
+            [1,2,2,2,2,2,1,2,2,2,2,2,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        const COLS = MAP[0].length;
+        const ROWS = MAP.length;
+        let CELL_SIZE;
+        let score = 0;
+        let gameActive = true;
+
+        // Адаптация размера канваса
+        function resizeCanvas() {
+            const maxSize = Math.min(window.innerWidth * 0.95, window.innerHeight * 0.75);
+            CELL_SIZE = Math.floor(maxSize / COLS);
+            canvas.width = CELL_SIZE * COLS;
+            canvas.height = CELL_SIZE * ROWS;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Игровые объекты
+        const player = { x: 1, y: 1, dir: {x: 0, y: 0}, nextDir: {x: 0, y: 0} };
+        const ghosts = [
+            { x: 11, y: 11, color: '#ff0000', dir: {x: 0, y: -1} },
+            { x: 1, y: 13, color: '#ffb8ff', dir: {x: 1, y: 0} }
+        ];
+
+        function drawMap() {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (MAP[r][c] === 1) {
+                        ctx.fillStyle = '#2121ff';
+                        ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                    } else if (MAP[r][c] === 2) {
+                        ctx.fillStyle = '#ffb8ae';
+                        ctx.beginPath();
+                        ctx.arc(c * CELL_SIZE + CELL_SIZE/2, r * CELL_SIZE + CELL_SIZE/2, CELL_SIZE/6, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                }
+            }
+        }
+
+        function drawPlayer() {
+            ctx.fillStyle = '#ffff00';
+            ctx.beginPath();
+            const cx = player.x * CELL_SIZE + CELL_SIZE/2;
+            const cy = player.y * CELL_SIZE + CELL_SIZE/2;
+            const r = CELL_SIZE/2 - 2;
+            
+            // Анимация рта
+            const mouthAngle = (Math.sin(Date.now() / 100) + 1) * 0.2 + 0.1;
+            let startAngle = mouthAngle;
+            let endAngle = Math.PI * 2 - mouthAngle;
+
+            if (player.dir.x === 1) { startAngle += 0; endAngle += 0; }
+            else if (player.dir.x === -1) { startAngle += Math.PI; endAngle += Math.PI; }
+            else if (player.dir.y === -1) { startAngle -= Math.PI/2; endAngle -= Math.PI/2; }
+            else if (player.dir.y === 1) { startAngle += Math.PI/2; endAngle += Math.PI/2; }
+
+            ctx.arc(cx, cy, r, startAngle, endAngle);
+            ctx.lineTo(cx, cy);
+            ctx.fill();
+        }
+
+        function drawGhosts() {
+            ghosts.forEach(g => {
+                ctx.fillStyle = g.color;
+                ctx.beginPath();
+                const cx = g.x * CELL_SIZE + CELL_SIZE/2;
+                const cy = g.y * CELL_SIZE + CELL_SIZE/2;
+                const r = CELL_SIZE/2 - 2;
+                ctx.arc(cx, cy, r, Math.PI, 0, false);
+                ctx.lineTo(cx + r, cy + r);
+                ctx.lineTo(cx - r, cy + r);
+                ctx.fill();
+                
+                // Глаза
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(cx - r/3, cy - r/4, r/4, 0, Math.PI*2);
+                ctx.arc(cx + r/3, cy - r/4, r/4, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(cx - r/3, cy - r/4, r/8, 0, Math.PI*2);
+                ctx.arc(cx + r/3, cy - r/4, r/8, 0, Math.PI*2);
+                ctx.fill();
+            });
+        }
+
+        function canMove(x, y) {
+            if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return false;
+            return MAP[y][x] !== 1;
+        }
+
+        function updatePlayer() {
+            // Пытаемся сменить направление, если возможно
+            if (canMove(player.x + player.nextDir.x, player.y + player.nextDir.y)) {
+                player.dir = { ...player.nextDir };
+            }
+            
+            const nextX = player.x + player.dir.x;
+            const nextY = player.y + player.dir.y;
+
+            if (canMove(nextX, nextY)) {
+                player.x = nextX;
+                player.y = nextY;
+            }
+
+            // Сбор точек
+            if (MAP[player.y][player.x] === 2) {
+                MAP[player.y][player.x] = 0;
+                score += 10;
+                scoreEl.innerText = `Счёт: ${score}`;
+                haptic.impactOccurred('light'); // Виброотклик Telegram
+            }
+        }
+
+        function updateGhosts() {
+            ghosts.forEach(g => {
+                // Простой ИИ: случайное блуждание с приоритетом движения
+                const dirs = [{x:0,y:-1}, {x:0,y:1}, {x:-1,y:0}, {x:1,y:0}];
+                const validDirs = dirs.filter(d => canMove(g.x + d.x, g.y + d.y) && !(d.x === -g.dir.x && d.y === -g.dir.y));
+                
+                if (validDirs.length > 0) {
+                    // 30% шанс пойти к игроку, если видит
+                    if (Math.random() < 0.3) {
+                        const dx = player.x - g.x;
+                        const dy = player.y - g.y;
+                        const targetDir = Math.abs(dx) > Math.abs(dy) ? {x: Math.sign(dx), y: 0} : {x: 0, y: Math.sign(dy)};
+                        if (validDirs.find(d => d.x === targetDir.x && d.y === targetDir.y)) {
+                            g.dir = targetDir;
+                        } else {
+                            g.dir = validDirs[Math.floor(Math.random() * validDirs.length)];
+                        }
+                    } else {
+                        g.dir = validDirs[Math.floor(Math.random() * validDirs.length)];
+                    }
+                } else {
+                    g.dir = {x: -g.dir.x, y: -g.dir.y}; // Разворот
+                }
+
+                g.x += g.dir.x;
+                g.y += g.dir.y;
+
+                // Проверка столкновения
+                if (g.x === player.x && g.y === player.y) {
+                    gameOver();
+                }
+            });
+        }
+
+        function gameOver() {
+            gameActive = false;
+            gameOverEl.style.display = 'block';
+            haptic.notificationOccurred('error'); // Сильная вибрация
+            // Можно отправить результат в бота через tg.sendData()
+        }
+
+        let lastTime = 0;
+        const moveInterval = 200; // Скорость движения (мс)
+        let accumulator = 0;
+
+        function gameLoop(timestamp) {
+            if (!gameActive) return;
+            
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            accumulator += deltaTime;
+
+            if (accumulator >= moveInterval) {
+                updatePlayer();
+                updateGhosts();
+                accumulator = 0;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawMap();
+            drawPlayer();
+            drawGhosts();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Управление свайпами
+        let touchStartX = 0, touchStartY = 0;
+        canvas.addEventListener('touchstart', e => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        });
+        canvas.addEventListener('touchend', e => {
+            const dx = e.changedTouches[0].clientX - touchStartX;
+            const dy = e.changedTouches[0].clientY - touchStartY;
+            if (Math.abs(dx) > Math.abs(dy)) {
+                player.nextDir = { x: dx > 0 ? 1 : -1, y: 0 };
+            } else {
+                player.nextDir = { x: 0, y: dy > 0 ? 1 : -1 };
+            }
+        });
+
+        // Управление клавиатурой (для тестов на ПК)
+        document.addEventListener('keydown', e => {
+            if (e.key === 'ArrowUp') player.nextDir = {x: 0, y: -1};
+            if (e.key === 'ArrowDown') player.nextDir = {x: 0, y: 1};
+            if (e.key === 'ArrowLeft') player.nextDir = {x: -1, y: 0};
+            if (e.key === 'ArrowRight') player.nextDir = {x: 1, y: 0};
+        });
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
